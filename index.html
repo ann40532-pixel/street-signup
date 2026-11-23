@@ -293,7 +293,7 @@
         <label for="in-sync-url">同步網址</label>
         <input type="url" id="in-sync-url" placeholder="https://script.google.com/macros/s/…/exec"
                autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
-        <p class="hint">由試算表管理者提供（Apps Script 網頁應用程式的網址）</p>
+        <p class="hint">不是試算表的網址，而是 Apps Script 部署後的「網頁應用程式網址」（開頭 https://script.google.com，結尾 /exec）</p>
       </div>
       <div class="field">
         <label for="in-device">這台裝置的名稱</label>
@@ -979,6 +979,14 @@
     var url = $('in-sync-url').value.trim().split('?')[0];
     var device = $('in-device').value.trim();
     var err = $('err-sync');
+    if (/docs\.google\.com\/spreadsheets/.test(url)) {
+      err.textContent = '這是試算表本身的網址。請改貼 Apps Script「部署」後得到的網頁應用程式網址（開頭 https://script.google.com，結尾 /exec）';
+      return $('in-sync-url').focus();
+    }
+    if (/script\.google\.com\/.*\/dev$/.test(url)) {
+      err.textContent = '這是測試用網址（結尾 /dev），其他裝置連不上。請到「部署 → 管理部署作業」複製結尾是 /exec 的網址';
+      return $('in-sync-url').focus();
+    }
     if (!SYNC_URL_RE.test(url)) {
       err.textContent = '網址格式不對，應該長得像：https://script.google.com/macros/s/……/exec';
       return $('in-sync-url').focus();
