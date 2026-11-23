@@ -321,29 +321,71 @@
 (function () {
   'use strict';
 
-  /* ================= 資料儲存 ================= */
+  /* ================= 資料儲存 =================
+   * 活動與 email：存在 localStorage，同一個瀏覽器的所有分頁共用。
+   *   每次修改前都會「重新讀取最新資料 → 修改 → 寫回」，
+   *   所以同時開好幾個分頁/視窗，也不會把別的分頁存的資料蓋掉。
+   * 目前所在的畫面：每個分頁各自記住（sessionStorage），互不影響。
+   */
   var STORE_KEY = 'streetSignup.v1';
+  var UI_KEY = 'streetSignup.ui';
   var storageOK = (function () {
     try { localStorage.setItem('__t', '1'); localStorage.removeItem('__t'); return true; }
     catch (e) { return false; }
   })();
+  var memoryEvents = []; // 瀏覽器不能存資料時（例如無痕模式）暫存在記憶體
 
-  function load() {
-    if (storageOK) {
-      try {
-        var s = JSON.parse(localStorage.getItem(STORE_KEY));
-        if (s && Array.isArray(s.events)) return s;
-      } catch (e) { /* 資料損毀時重新開始 */ }
-    }
-    return { events: [], currentId: null, screen: 'home' };
+  function readStore() {
+    try {
+      var s = JSON.parse(localStorage.getItem(STORE_KEY));
+      if (s && Array.isArray(s.events)) return s;
+    } catch (e) {}
+    return null;
+  }
+  function readEvents() {
+    if (!storageOK) return memoryEvents;
+    var s = readStore();
+    return s ? s.events : [];
+  }
+  function writeEvents(events) {
+    if (!storageOK) { memoryEvents = events; return true; }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ events: events })); return true; }
+    catch (e) { return false; }
   }
 
-  var state = load();
+  // 安全修改資料：fn 回傳錯誤訊息代表取消，不回傳代表成功並寫回
+  function mutate(fn) {
+    var events = readEvents();
+    var msg = fn(events);
+    if (msg) { state.events = events; return msg; }
+    if (!writeEvents(events)) { state.events = readEvents(); return '儲存失敗（儲存空間不足？），請先匯出資料備份'; }
+    state.events = events;
+    return '';
+  }
 
-  function persist() {
-    if (!storageOK) return;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-    catch (e) { toast('儲存空間寫入失敗，請先匯出資料', 'error'); }
+  function loadUI() {
+    var ui = null;
+    try { ui = JSON.parse(sessionStorage.getItem(UI_KEY)); } catch (e) {}
+    if (!ui && storageOK) { try { ui = JSON.parse(localStorage.getItem(UI_KEY)); } catch (e) {} }
+    if (!ui && storageOK) { // 舊版資料格式：畫面狀態原本和資料存在一起
+      var old = readStore();
+      if (old && old.screen) ui = { screen: old.screen, currentId: old.currentId };
+    }
+    return ui || { screen: 'home', currentId: null };
+  }
+  function saveUI(thisTabOnly) {
+    var s = JSON.stringify({ screen: state.screen, currentId: state.currentId });
+    try { sessionStorage.setItem(UI_KEY, s); } catch (e) {}
+    if (!thisTabOnly) { try { localStorage.setItem(UI_KEY, s); } catch (e) {} } // 給下次重新開啟時用
+  }
+
+  var ui = loadUI();
+  var state = { events: readEvents(), screen: ui.screen, currentId: ui.currentId };
+  function refresh() { state.events = readEvents(); }
+
+  function findById(list, id) {
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
   }
 
   // 請瀏覽器盡量不要自動清掉資料（支援的瀏覽器才有作用）
@@ -352,10 +394,7 @@
   }
 
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-  function currentEvent() {
-    for (var i = 0; i < state.events.length; i++) if (state.events[i].id === state.currentId) return state.events[i];
-    return null;
-  }
+  function currentEvent() { return findById(state.events, state.currentId); }
 
   /* ================= 工具 ================= */
   var $ = function (id) { return document.getElementById(id); };
@@ -411,24 +450,27 @@
     if ((screen === 'entry' || screen === 'list') && !currentEvent()) screen = 'home';
     state.screen = screen;
     editingId = null;
-    persist();
+    saveUI();
     render();
     window.scrollTo(0, 0);
   }
 
+  function updateBinds() {
+    var ev = currentEvent();
+    if (!ev) return;
+    document.querySelectorAll('[data-bind="place"]').forEach(function (n) { n.textContent = ev.place; });
+    document.querySelectorAll('[data-bind="date"]').forEach(function (n) { n.textContent = fmtDate(ev.date); });
+    document.querySelectorAll('[data-bind="count"]').forEach(function (n) { n.textContent = ev.emails.length; });
+  }
+
   function render() {
+    refresh();
     var screen = state.screen;
     if (SCREENS.indexOf(screen) === -1 || ((screen === 'entry' || screen === 'list') && !currentEvent())) {
       screen = state.screen = 'home';
     }
     SCREENS.forEach(function (s) { $('screen-' + s).hidden = s !== screen; });
-
-    var ev = currentEvent();
-    if (ev) {
-      document.querySelectorAll('[data-bind="place"]').forEach(function (n) { n.textContent = ev.place; });
-      document.querySelectorAll('[data-bind="date"]').forEach(function (n) { n.textContent = fmtDate(ev.date); });
-      document.querySelectorAll('[data-bind="count"]').forEach(function (n) { n.textContent = ev.emails.length; });
-    }
+    updateBinds();
 
     if (screen === 'home') renderHome();
     if (screen === 'create') {
@@ -483,7 +525,8 @@
     if (!date) { $('err-create').textContent = '請選擇活動日期'; $('in-date').focus(); return; }
     if (!place) { $('err-create').textContent = '請輸入舉辦地點'; $('in-place').focus(); return; }
     var ev = { id: uid(), date: date, place: place, createdAt: Date.now(), emails: [] };
-    state.events.push(ev);
+    var msg = mutate(function (events) { events.push(ev); });
+    if (msg) { $('err-create').textContent = msg; return; }
     state.currentId = ev.id;
     go('entry');
     toast('活動已建立');
@@ -493,23 +536,25 @@
   /* ---------- 輸入 email ---------- */
   $('form-entry').addEventListener('submit', function (e) {
     e.preventDefault();
-    var ev = currentEvent();
-    if (!ev) return go('home');
     var input = $('in-email');
     var v = normalizeEmail(input.value);
-    var msg = validateEmail(v, ev, null);
+    var msg = mutate(function (events) {
+      var ev = findById(events, state.currentId);
+      if (!ev) return '找不到這場活動，請回首頁重新選擇';
+      var err = validateEmail(v, ev, null);
+      if (err) return err;
+      ev.emails.push({ id: uid(), email: v, createdAt: Date.now() });
+    });
+    updateBinds();
     if (msg) {
       $('err-email').textContent = msg;
       input.classList.add('invalid');
       input.focus();
       return;
     }
-    ev.emails.push({ id: uid(), email: v, createdAt: Date.now() });
-    persist();
     input.value = '';
     $('err-email').textContent = '';
     input.classList.remove('invalid');
-    document.querySelectorAll('[data-bind="count"]').forEach(function (n) { n.textContent = ev.emails.length; });
     toast('✓ 已儲存');
     input.focus();
   });
@@ -569,12 +614,17 @@
 
         var doSave = function () {
           var v = normalizeEmail(input.value);
-          var msg = validateEmail(v, ev, item.id);
+          var msg = mutate(function (events) {
+            var ev2 = findById(events, state.currentId);
+            var it = ev2 && findById(ev2.emails, item.id);
+            if (!it) return '這筆資料已在其他視窗被刪除，請按取消';
+            var e2 = validateEmail(v, ev2, item.id);
+            if (e2) return e2;
+            it.email = v;
+            it.updatedAt = Date.now();
+          });
           if (msg) { err.textContent = msg; input.classList.add('invalid'); input.focus(); return; }
-          item.email = v;
-          item.updatedAt = Date.now();
           editingId = null;
-          persist();
           renderList();
           toast('✓ 已更新');
         };
@@ -596,9 +646,11 @@
           makeBtn('編輯', 'btn-secondary', function () { editingId = item.id; renderList(); }),
           makeBtn('刪除', 'btn-danger', function () {
             if (!confirm('確定要刪除這筆資料嗎？\n\n' + item.email)) return;
-            ev.emails = ev.emails.filter(function (x) { return x.id !== item.id; });
-            if (editingId === item.id) editingId = null;
-            persist();
+            var msg = mutate(function (events) {
+              var ev2 = findById(events, state.currentId);
+              if (ev2) ev2.emails = ev2.emails.filter(function (x) { return x.id !== item.id; });
+            });
+            if (msg) return toast(msg, 'error');
             renderList();
             toast('已刪除');
           })
@@ -615,8 +667,9 @@
   }
 
   $('btn-export').addEventListener('click', function () {
+    refresh();
     var ev = currentEvent();
-    if (!ev.emails.length) return toast('目前沒有資料可以匯出', 'error');
+    if (!ev || !ev.emails.length) return toast('目前沒有資料可以匯出', 'error');
     var name = ('地推名單_' + ev.date + '_' + ev.place).replace(/[\\\/:*?"<>|\s]+/g, '_') + '.txt';
     var blob = new Blob([emailsText(ev)], { type: 'text/plain;charset=utf-8' });
     var url = URL.createObjectURL(blob);
@@ -631,8 +684,9 @@
   });
 
   $('btn-copy').addEventListener('click', function () {
+    refresh();
     var ev = currentEvent();
-    if (!ev.emails.length) return toast('目前沒有資料可以複製', 'error');
+    if (!ev || !ev.emails.length) return toast('目前沒有資料可以複製', 'error');
     var text = emailsText(ev);
     var done = function () { toast('已複製 ' + ev.emails.length + ' 筆'); };
     var fallback = function () {
@@ -662,6 +716,26 @@
   });
 
   /* ---------- 啟動 ---------- */
+  // 其他分頁/視窗改了資料時，這裡的畫面跟著更新
+  function syncFromOtherTabs() {
+    refresh();
+    if ((state.screen === 'entry' || state.screen === 'list') && !currentEvent()) {
+      state.screen = 'home';
+      editingId = null;
+      saveUI(true); // 背景同步不改動「上次使用的畫面」
+      return render();
+    }
+    updateBinds();
+    if (state.screen === 'home') renderHome();
+    if (state.screen === 'list' && !editingId) renderList(); // 正在編輯時先不打斷
+  }
+  window.addEventListener('storage', function (e) {
+    if (e.key === STORE_KEY || e.key === null) syncFromOtherTabs();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') syncFromOtherTabs();
+  });
+
   if (!storageOK) $('storage-banner').hidden = false;
   render(); // 重新整理或重新開啟時，回到上次的畫面
 
