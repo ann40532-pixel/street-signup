@@ -1,7 +1,7 @@
 // 讓「加入主畫面」後在沒有網路時也能開啟。
 // 策略：先用快取立即開啟，有網路時在背景更新（下次開啟就是新版）。
 // 修改程式後請把版本號 +1，舊快取才會被清掉。
-const CACHE = 'street-signup-v2';
+const CACHE = 'street-signup-v3';
 const ASSETS = [
   './',
   './index.html',

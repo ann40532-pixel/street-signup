@@ -25,6 +25,7 @@
     --danger: #c2410c;
     --danger-soft: #fdece4;
     --ok: #15803d;
+    --warn: #b45309;
     --shadow: 0 1px 2px rgba(15, 30, 25, .06), 0 4px 16px rgba(15, 30, 25, .06);
     --radius: 16px;
   }
@@ -41,6 +42,7 @@
       --danger: #f08a5d;
       --danger-soft: #3a221a;
       --ok: #4ade80;
+      --warn: #fbbf24;
       --shadow: none;
     }
   }
@@ -125,7 +127,7 @@
 
   label { display: block; font-weight: 600; margin-bottom: 6px; }
   .field + .field { margin-top: 16px; }
-  input[type="text"], input[type="email"], input[type="date"] {
+  input[type="text"], input[type="email"], input[type="date"], input[type="url"] {
     width: 100%;
     font: inherit;
     font-size: 18px; /* >=16px 避免 iOS 自動放大 */
@@ -220,8 +222,36 @@
     padding: 10px 14px; margin-bottom: 12px; font-size: 15px;
   }
 
+  /* ---------- 雲端同步 ---------- */
+  .sync-status {
+    display: flex; align-items: flex-start; gap: 8px;
+    font-size: 14px; color: var(--muted); margin: -4px 4px 12px;
+  }
+  .sync-status::before {
+    content: ''; flex: none; width: 8px; height: 8px; margin-top: 7px;
+    border-radius: 50%; background: currentColor;
+  }
+  .sync-status.ok { color: var(--ok); }
+  .sync-status.warn { color: var(--warn); }
+  .sync-status.error { color: var(--danger); }
+  .sync-status.busy::before { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  #settings-status { margin: 12px 4px; }
+
+  .intro { color: var(--muted); font-size: 15px; margin: 0 4px 12px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+  .settings-actions { display: flex; gap: 8px; }
+  .settings-actions .btn { flex: 1; }
+  .home-footer { text-align: center; margin-top: 24px; }
+  .home-footer .link-btn { font-size: 15px; }
+  #sync-home-status { font-weight: 400; color: var(--muted); }
+  #sync-home-status.st-ok { color: var(--ok); }
+  #sync-home-status.st-warn { color: var(--warn); }
+  #sync-home-status.st-error { color: var(--danger); }
+
   @media (prefers-reduced-motion: reduce) {
     .toast, .btn { transition: none; }
+    .sync-status.busy::before { animation: none; }
   }
 </style>
 </head>
@@ -244,6 +274,39 @@
     <div id="history" hidden>
       <h2 class="section-title">過往活動</h2>
       <ul id="history-list" class="history-list"></ul>
+    </div>
+    <div class="home-footer">
+      <button type="button" class="link-btn" id="btn-settings">☁ 雲端同步：<span id="sync-home-status">尚未設定</span></button>
+    </div>
+  </section>
+
+  <!-- 雲端同步設定 -->
+  <section id="screen-settings" hidden>
+    <header class="topbar">
+      <button type="button" class="link-btn" data-go="home">‹ 返回</button>
+      <h1>雲端同步</h1>
+      <span></span>
+    </header>
+    <p class="intro">設定後，有網路時會自動把活動和 email 上傳到 Google 試算表（每場活動一張工作表）。沒網路時先存在這台裝置，連上網路後自動補上傳。</p>
+    <form id="form-sync" class="card" novalidate>
+      <div class="field">
+        <label for="in-sync-url">同步網址</label>
+        <input type="url" id="in-sync-url" placeholder="https://script.google.com/macros/s/…/exec"
+               autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        <p class="hint">由試算表管理者提供（Apps Script 網頁應用程式的網址）</p>
+      </div>
+      <div class="field">
+        <label for="in-device">這台裝置的名稱</label>
+        <input type="text" id="in-device" maxlength="30" placeholder="例如：小明的 iPad" autocomplete="off">
+        <p class="hint">會記在試算表的「登記裝置」欄，方便知道是誰登記的</p>
+      </div>
+      <p class="err" id="err-sync" role="alert"></p>
+      <button type="submit" class="btn btn-primary btn-lg btn-block" id="btn-sync-save">儲存並測試連線</button>
+    </form>
+    <div id="settings-status" class="sync-status" hidden></div>
+    <div id="sync-actions" class="settings-actions" hidden>
+      <button type="button" class="btn btn-secondary" id="btn-sync-now">立即同步</button>
+      <button type="button" class="btn btn-ghost" id="btn-sync-off">停用同步</button>
     </div>
   </section>
 
@@ -282,6 +345,7 @@
       </div>
       <div class="count">已登記<b data-bind="count">0</b>筆</div>
     </div>
+    <div class="sync-status" data-sync-status hidden></div>
     <form id="form-entry" class="card" novalidate>
       <label for="in-email">Email</label>
       <input type="email" id="in-email" inputmode="email" placeholder="name@example.com"
@@ -306,6 +370,7 @@
       </div>
       <div class="count">共<b data-bind="count">0</b>筆</div>
     </div>
+    <div class="sync-status" data-sync-status hidden></div>
     <div class="toolbar">
       <button type="button" class="btn btn-primary" id="btn-export">匯出 TXT</button>
       <button type="button" class="btn btn-secondary" id="btn-copy">複製全部</button>
@@ -443,7 +508,7 @@
   }
 
   /* ================= 畫面切換 ================= */
-  var SCREENS = ['home', 'create', 'entry', 'list'];
+  var SCREENS = ['home', 'create', 'entry', 'list', 'settings'];
   var editingId = null;
 
   function go(screen) {
@@ -483,6 +548,8 @@
       $('in-email').classList.remove('invalid');
     }
     if (screen === 'list') renderList();
+    if (screen === 'settings') renderSettings();
+    renderSyncStatus();
   }
 
   /* ---------- 首頁 ---------- */
@@ -524,11 +591,12 @@
     var place = $('in-place').value.trim();
     if (!date) { $('err-create').textContent = '請選擇活動日期'; $('in-date').focus(); return; }
     if (!place) { $('err-create').textContent = '請輸入舉辦地點'; $('in-place').focus(); return; }
-    var ev = { id: uid(), date: date, place: place, createdAt: Date.now(), emails: [] };
+    var ev = { id: uid(), date: date, place: place, createdAt: Date.now(), rev: 1, emails: [], deletedIds: [] };
     var msg = mutate(function (events) { events.push(ev); });
     if (msg) { $('err-create').textContent = msg; return; }
     state.currentId = ev.id;
     go('entry');
+    scheduleSync();
     toast('活動已建立');
     setTimeout(function () { $('in-email').focus(); }, 50);
   });
@@ -543,7 +611,7 @@
       if (!ev) return '找不到這場活動，請回首頁重新選擇';
       var err = validateEmail(v, ev, null);
       if (err) return err;
-      ev.emails.push({ id: uid(), email: v, createdAt: Date.now() });
+      ev.emails.push({ id: uid(), email: v, createdAt: Date.now(), rev: 1 });
     });
     updateBinds();
     if (msg) {
@@ -552,6 +620,8 @@
       input.focus();
       return;
     }
+    scheduleSync();
+    renderSyncStatus();
     input.value = '';
     $('err-email').textContent = '';
     input.classList.remove('invalid');
@@ -622,10 +692,13 @@
             if (e2) return e2;
             it.email = v;
             it.updatedAt = Date.now();
+            it.rev = (it.rev || 1) + 1;
           });
           if (msg) { err.textContent = msg; input.classList.add('invalid'); input.focus(); return; }
           editingId = null;
           renderList();
+          scheduleSync();
+          renderSyncStatus();
           toast('✓ 已更新');
         };
         var doCancel = function () { editingId = null; renderList(); };
@@ -648,10 +721,18 @@
             if (!confirm('確定要刪除這筆資料嗎？\n\n' + item.email)) return;
             var msg = mutate(function (events) {
               var ev2 = findById(events, state.currentId);
-              if (ev2) ev2.emails = ev2.emails.filter(function (x) { return x.id !== item.id; });
+              if (!ev2) return;
+              var it = findById(ev2.emails, item.id);
+              ev2.emails = ev2.emails.filter(function (x) { return x.id !== item.id; });
+              // 記下刪除，之後同步時也從試算表刪掉（從沒上傳過、也沒開同步的就不用記）
+              if (it && (syncEnabled() || it.syncedRev != null)) {
+                ev2.deletedIds = (ev2.deletedIds || []).concat(item.id);
+              }
             });
             if (msg) return toast(msg, 'error');
             renderList();
+            scheduleSync();
+            renderSyncStatus();
             toast('已刪除');
           })
         );
@@ -710,6 +791,243 @@
     }
   });
 
+  /* ================= 雲端同步（Google 試算表） =================
+   * 每筆資料有版本號 rev，上傳成功後記下 syncedRev；兩者不同 = 還沒上傳。
+   * 刪除的資料先記在活動的 deletedIds，上傳成功後才清掉。
+   * 有網路就自動上傳；離線時先存在本機，連上網路後自動補上傳。
+   * 同步網址只存在各台裝置上，不會寫進程式碼（GitHub 是公開的）。
+   */
+  var SYNC_KEY = 'streetSignup.sync';
+  var SYNC_URL_RE = /^https:\/\/script\.google\.com\/(a\/macros\/[^\/]+\/|macros\/)s\/[\w-]+\/exec$/;
+  var BATCH = 300; // 每次最多上傳幾筆
+  var sync = { running: false, error: '', timer: null, retry: 0 };
+
+  function getSyncCfg() {
+    if (!storageOK) return {};
+    try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function setSyncCfg(cfg) {
+    try { localStorage.setItem(SYNC_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+  function syncEnabled() { return !!getSyncCfg().url; }
+
+  function isDirty(x) { return (x.rev || 1) !== x.syncedRev; }
+  function pendingOf(ev) {
+    var n = (ev.deletedIds || []).length;
+    ev.emails.forEach(function (e) { if (isDirty(e)) n++; });
+    return n;
+  }
+  function needsSync(ev) { return isDirty(ev) || pendingOf(ev) > 0; }
+
+  function scheduleSync(delay) {
+    if (!syncEnabled()) return;
+    clearTimeout(sync.timer);
+    sync.timer = setTimeout(runSync, delay == null ? 600 : delay);
+  }
+
+  function runSync() {
+    var cfg = getSyncCfg();
+    if (!cfg.url || sync.running) return;
+    if (!navigator.onLine) return renderSyncStatus();
+    if (!readEvents().some(needsSync)) { sync.error = ''; return renderSyncStatus(); }
+
+    sync.running = true;
+    renderSyncStatus();
+    var work = function () { return syncBatches(cfg, 0); };
+    // 同一台裝置開了好幾個分頁時，同一時間只讓一個分頁上傳
+    var job = (navigator.locks && navigator.locks.request)
+      ? navigator.locks.request('street-signup-sync', { ifAvailable: true }, function (lock) {
+          return lock ? work() : 'busy';
+        })
+      : work();
+
+    Promise.resolve(job).then(function (result) {
+      sync.running = false;
+      sync.error = '';
+      sync.retry = 0;
+      if (result === 'busy') scheduleSync(3000); // 別的分頁正在上傳，等一下再確認
+      afterSyncChange();
+    }, function (err) {
+      sync.running = false;
+      sync.error = (err && err.message) || String(err);
+      sync.retry = Math.min(sync.retry + 1, 5);
+      scheduleSync([5, 10, 20, 40, 60][sync.retry - 1] * 1000); // 失敗後逐漸拉長重試間隔
+      afterSyncChange();
+    });
+  }
+
+  function syncBatches(cfg, round) {
+    var events = readEvents().filter(needsSync);
+    if (!events.length || round >= 100) return Promise.resolve('done');
+
+    var budget = BATCH;
+    var sent = { ev: Object.create(null), em: Object.create(null), del: Object.create(null) };
+    var payload = [];
+    events.forEach(function (ev) {
+      if (budget <= 0) return;
+      var ups = [];
+      ev.emails.forEach(function (e) {
+        if (budget > 0 && isDirty(e)) {
+          ups.push({ id: e.id, email: e.email, createdAt: e.createdAt });
+          sent.em[e.id] = e.rev || 1;
+          budget--;
+        }
+      });
+      var dels = (ev.deletedIds || []).slice();
+      dels.forEach(function (id) { sent.del[id] = true; });
+      sent.ev[ev.id] = ev.rev || 1;
+      payload.push({ date: ev.date, place: ev.place, upserts: ups, deletes: dels });
+    });
+
+    return fetchWithTimeout(cfg.url, {
+      method: 'POST', // 不設 Content-Type（預設 text/plain），Apps Script 才能跨網域接收
+      body: JSON.stringify({ app: 'street-signup', device: cfg.device || '', events: payload })
+    }, 30000).then(parseSyncResponse).then(function () {
+      // 上傳成功：記下已同步的版本（上傳途中又被修改的，版本號不同，下次會再傳）
+      mutate(function (all) {
+        all.forEach(function (ev) {
+          if (!(ev.id in sent.ev)) return;
+          ev.syncedRev = sent.ev[ev.id];
+          ev.emails.forEach(function (e) { if (e.id in sent.em) e.syncedRev = sent.em[e.id]; });
+          if (ev.deletedIds) ev.deletedIds = ev.deletedIds.filter(function (id) { return !sent.del[id]; });
+        });
+      });
+      renderSyncStatus();
+      return syncBatches(cfg, round + 1);
+    });
+  }
+
+  function fetchWithTimeout(url, opts, ms) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    if (ctrl) opts.signal = ctrl.signal;
+    var t = setTimeout(function () { if (ctrl) ctrl.abort(); }, ms);
+    return fetch(url, opts).then(function (r) {
+      clearTimeout(t);
+      return r;
+    }, function (e) {
+      clearTimeout(t);
+      throw new Error(e && e.name === 'AbortError' ? '連線逾時' : '連不上同步網址');
+    });
+  }
+
+  function parseSyncResponse(r) {
+    return r.text().then(function (txt) {
+      var res;
+      try { res = JSON.parse(txt); } catch (e) { throw new Error('同步網址回應不正確'); }
+      if (!res || !res.ok) throw new Error((res && res.error) || '試算表回報錯誤');
+      return res;
+    });
+  }
+
+  function syncInfo(events) {
+    var n = 0, evDirty = false;
+    events.forEach(function (ev) { n += pendingOf(ev); if (isDirty(ev)) evDirty = true; });
+    if (!n && !evDirty) return { cls: 'ok', text: '已同步到 Google 試算表' };
+    var what = n ? n + ' 筆待上傳' : '活動待上傳';
+    if (!navigator.onLine) return { cls: 'warn', text: '離線中・' + what + '，連上網路後會自動同步' };
+    if (sync.running) return { cls: 'busy', text: '同步中…（' + what + '）' };
+    if (sync.error) return { cls: 'error', text: '同步失敗・' + what + '，稍後自動重試（' + sync.error + '）' };
+    return { cls: 'busy', text: what + '…' };
+  }
+
+  function renderSyncStatus() {
+    refresh();
+    var on = syncEnabled();
+    var ev = currentEvent();
+    document.querySelectorAll('[data-sync-status]').forEach(function (n) {
+      if (!on || !ev) { n.hidden = true; return; }
+      var info = syncInfo([ev]);
+      n.hidden = false;
+      n.className = 'sync-status ' + info.cls;
+      n.textContent = info.text;
+    });
+    var home = $('sync-home-status');
+    if (!on) { home.textContent = '尚未設定'; home.className = ''; }
+    else {
+      var all = syncInfo(state.events);
+      home.textContent = all.text;
+      home.className = 'st-' + all.cls;
+    }
+    var st = $('settings-status');
+    if (!on) st.hidden = true;
+    else {
+      var info2 = syncInfo(state.events);
+      st.hidden = false;
+      st.className = 'sync-status ' + info2.cls;
+      st.textContent = info2.text;
+    }
+  }
+
+  function afterSyncChange() {
+    renderSyncStatus();
+    if (state.screen === 'home') renderHome();
+  }
+
+  /* ---------- 同步設定畫面 ---------- */
+  function renderSettings() {
+    var cfg = getSyncCfg();
+    $('in-sync-url').value = cfg.url || '';
+    $('in-device').value = cfg.device || '';
+    $('err-sync').textContent = '';
+    $('sync-actions').hidden = !cfg.url;
+  }
+
+  $('btn-settings').addEventListener('click', function () { go('settings'); });
+
+  $('form-sync').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var url = $('in-sync-url').value.trim().split('?')[0];
+    var device = $('in-device').value.trim();
+    var err = $('err-sync');
+    if (!SYNC_URL_RE.test(url)) {
+      err.textContent = '網址格式不對，應該長得像：https://script.google.com/macros/s/……/exec';
+      return $('in-sync-url').focus();
+    }
+    if (!device) {
+      err.textContent = '請輸入這台裝置的名稱（例如：小明的 iPad）';
+      return $('in-device').focus();
+    }
+    setSyncCfg({ url: url, device: device });
+    $('in-sync-url').value = url;
+    err.textContent = '';
+    $('sync-actions').hidden = false;
+    sync.error = '';
+    sync.retry = 0;
+    if (!navigator.onLine) {
+      toast('已儲存，連上網路後會自動同步');
+      return renderSyncStatus();
+    }
+    var btn = $('btn-sync-save');
+    btn.disabled = true;
+    btn.textContent = '測試連線中…';
+    fetchWithTimeout(url, { method: 'GET' }, 20000).then(parseSyncResponse).then(function (res) {
+      if (res.app !== 'street-signup') throw new Error('這個網址不是地推登記的同步程式');
+      toast('✓ 連線成功');
+      scheduleSync(0);
+    }).catch(function (e2) {
+      err.textContent = '連線測試失敗（' + e2.message + '）。請確認網址正確，而且部署時「誰可以存取」選的是「所有人」。';
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = '儲存並測試連線';
+      renderSyncStatus();
+    });
+  });
+
+  $('btn-sync-now').addEventListener('click', function () {
+    if (!navigator.onLine) return toast('目前沒有網路', 'error');
+    sync.retry = 0;
+    scheduleSync(0);
+  });
+
+  $('btn-sync-off').addEventListener('click', function () {
+    if (!confirm('確定要停用雲端同步嗎？\n\n這台裝置的資料不會刪除，之後重新設定還是會補上傳。')) return;
+    setSyncCfg({ device: getSyncCfg().device || '' });
+    clearTimeout(sync.timer);
+    sync.error = '';
+    renderSettings();
+    renderSyncStatus();
+  });
+
   /* ---------- 返回按鈕 ---------- */
   document.querySelectorAll('[data-go]').forEach(function (b) {
     b.addEventListener('click', function () { go(b.getAttribute('data-go')); });
@@ -728,16 +1046,29 @@
     updateBinds();
     if (state.screen === 'home') renderHome();
     if (state.screen === 'list' && !editingId) renderList(); // 正在編輯時先不打斷
+    renderSyncStatus();
   }
   window.addEventListener('storage', function (e) {
     if (e.key === STORE_KEY || e.key === null) syncFromOtherTabs();
+    if (e.key === SYNC_KEY) {
+      if (state.screen === 'settings') renderSettings();
+      renderSyncStatus();
+      scheduleSync();
+    }
   });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') syncFromOtherTabs();
+    if (document.visibilityState === 'visible') { syncFromOtherTabs(); scheduleSync(0); }
   });
+  window.addEventListener('online', function () { renderSyncStatus(); scheduleSync(0); });
+  window.addEventListener('offline', renderSyncStatus);
+  // 保險：每分鐘檢查一次有沒有還沒上傳的資料
+  setInterval(function () {
+    if (syncEnabled() && !sync.running && readEvents().some(needsSync)) scheduleSync(0);
+  }, 60000);
 
   if (!storageOK) $('storage-banner').hidden = false;
   render(); // 重新整理或重新開啟時，回到上次的畫面
+  scheduleSync(1000);
 
   // 放在網站上（例如 GitHub Pages）時啟用離線快取；直接點兩下開檔案時會略過
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
