@@ -202,6 +202,7 @@
   .email-list .edit-wrap input { min-height: 46px; padding: 8px 12px; }
   .email-list .edit-wrap .err { min-height: 0; }
   .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+  .danger-zone { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
 
   /* ---------- Toast / banner ---------- */
   .toast {
@@ -377,6 +378,9 @@
     </div>
     <ol id="email-list" class="email-list"></ol>
     <p id="list-empty" class="empty" hidden>還沒有任何登記資料</p>
+    <div class="danger-zone">
+      <button type="button" class="btn btn-danger btn-block" id="btn-delete-event">刪除這場活動</button>
+    </div>
   </section>
 </div>
 
@@ -741,6 +745,38 @@
       list.appendChild(li);
     });
   }
+
+  /* ---------- 刪除整場活動 ----------
+   * 只從這台裝置刪除；試算表是大家共用的總表，已上傳的資料保留，避免誤刪別人的資料。
+   */
+  $('btn-delete-event').addEventListener('click', function () {
+    refresh();
+    var ev = currentEvent();
+    if (!ev) return go('home');
+    var lines = [
+      '確定要刪除這場活動嗎？',
+      '',
+      fmtDate(ev.date) + ' ' + ev.place + '（' + ev.emails.length + ' 筆 email）',
+      ''
+    ];
+    if (syncEnabled()) {
+      lines.push('只會從這台裝置刪除，Google 試算表裡已上傳的資料會保留。');
+      var unsynced = ev.emails.filter(isDirty).length;
+      if (unsynced) lines.push('', '⚠ 還有 ' + unsynced + ' 筆還沒上傳到試算表，刪除後就找不回來了。');
+    } else if (ev.emails.length) {
+      lines.push('這台裝置沒有開雲端同步，刪除後資料就找不回來了，建議先「匯出 TXT」。');
+    }
+    if (!confirm(lines.join('\n').trim())) return;
+    var msg = mutate(function (events) {
+      for (var i = events.length - 1; i >= 0; i--) {
+        if (events[i].id === ev.id) events.splice(i, 1);
+      }
+    });
+    if (msg) return toast(msg, 'error');
+    state.currentId = null;
+    go('home');
+    toast('已刪除活動');
+  });
 
   /* ---------- 匯出 TXT / 複製 ---------- */
   function emailsText(ev) {
